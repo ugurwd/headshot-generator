@@ -1,8 +1,7 @@
 // app/api/enhance/route.js
 import { NextResponse } from 'next/server';
 
-// Runtime configuration to prevent build-time errors
-export const runtime = 'edge';
+// Use Node.js runtime for better compatibility
 export const dynamic = 'force-dynamic';
 
 export async function POST(request) {
