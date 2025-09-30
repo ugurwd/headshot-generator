@@ -1,7 +1,0 @@
-{
-  "functions": {
-    "app/api/enhance/route.js": {
-      "maxDuration": 30
-    }
-  }
-}a

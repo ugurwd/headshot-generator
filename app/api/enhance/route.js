@@ -1,6 +1,10 @@
 // app/api/enhance/route.js
 import { NextResponse } from 'next/server';
 
+// Runtime configuration to prevent build-time errors
+export const runtime = 'edge';
+export const dynamic = 'force-dynamic';
+
 export async function POST(request) {
   try {
     const { 
@@ -17,10 +21,23 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Please provide at least one input image' }, { status: 400 });
     }
 
-    const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN?.trim();
+    // Get API token with proper error handling
+    const REPLICATE_API_TOKEN = process.env.REPLICATE_API_TOKEN || '';
     
-    if (!REPLICATE_API_TOKEN || !REPLICATE_API_TOKEN.startsWith('r8_')) {
-      return NextResponse.json({ error: 'Invalid or missing Replicate API token' }, { status: 500 });
+    if (!REPLICATE_API_TOKEN) {
+      console.error('REPLICATE_API_TOKEN is not configured');
+      return NextResponse.json({ 
+        error: 'Enhancement service is not configured. Please contact support.',
+        details: 'Missing API configuration'
+      }, { status: 503 });
+    }
+
+    if (!REPLICATE_API_TOKEN.startsWith('r8_')) {
+      console.error('Invalid REPLICATE_API_TOKEN format');
+      return NextResponse.json({ 
+        error: 'Enhancement service configuration error',
+        details: 'Invalid token format'
+      }, { status: 503 });
     }
 
     let processedImage = inputImages[0];
@@ -54,15 +71,20 @@ export async function POST(request) {
           const prediction = await gfpganResponse.json();
           
           if (prediction.status === 'starting' || prediction.status === 'processing') {
-            processedImage = await pollForCompletion(prediction.id, REPLICATE_API_TOKEN);
-            enhancementsApplied.push('Face enhancement & skin smoothing');
+            const result = await pollForCompletion(prediction.id, REPLICATE_API_TOKEN);
+            if (result) {
+              processedImage = result;
+              enhancementsApplied.push('Face enhancement & skin smoothing');
+            }
           } else if (prediction.status === 'succeeded' && prediction.output) {
             processedImage = prediction.output;
             enhancementsApplied.push('Face enhancement & skin smoothing');
           }
+        } else {
+          console.log('Face enhancement failed, continuing with next step');
         }
       } catch (error) {
-        console.log('Face enhancement failed, continuing:', error.message);
+        console.log('Face enhancement error:', error.message);
       }
     }
 
@@ -91,15 +113,20 @@ export async function POST(request) {
           const prediction = await realEsrganResponse.json();
           
           if (prediction.status === 'starting' || prediction.status === 'processing') {
-            processedImage = await pollForCompletion(prediction.id, REPLICATE_API_TOKEN);
-            enhancementsApplied.push('Quality enhancement & sharpening');
+            const result = await pollForCompletion(prediction.id, REPLICATE_API_TOKEN);
+            if (result) {
+              processedImage = result;
+              enhancementsApplied.push('Quality enhancement & sharpening');
+            }
           } else if (prediction.status === 'succeeded' && prediction.output) {
             processedImage = prediction.output;
             enhancementsApplied.push('Quality enhancement & sharpening');
           }
+        } else {
+          console.log('Quality enhancement failed, continuing');
         }
       } catch (error) {
-        console.log('Quality enhancement failed:', error.message);
+        console.log('Quality enhancement error:', error.message);
       }
     }
 
@@ -169,9 +196,11 @@ export async function POST(request) {
               }
             }
           }
+        } else {
+          console.log('Background removal failed, skipping blur');
         }
       } catch (error) {
-        console.log('Background blur failed:', error.message);
+        console.log('Background blur error:', error.message);
       }
     }
 
@@ -220,9 +249,11 @@ export async function POST(request) {
             processedImage = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
             enhancementsApplied.push(`${colorStyle.charAt(0).toUpperCase() + colorStyle.slice(1)} color grading`);
           }
+        } else {
+          console.log('Color styling failed, using original colors');
         }
       } catch (error) {
-        console.log('Color styling failed:', error.message);
+        console.log('Color styling error:', error.message);
       }
     }
 
@@ -246,10 +277,11 @@ export async function POST(request) {
     });
 
   } catch (error) {
-    console.error('Fatal error in enhancement API:', error);
+    console.error('Enhancement API error:', error);
     return NextResponse.json({ 
-      error: error.message || 'Failed to enhance image',
-      details: error.toString()
+      error: 'Failed to enhance image',
+      details: error.message || 'An unexpected error occurred',
+      timestamp: new Date().toISOString()
     }, { status: 500 });
   }
 }
@@ -259,6 +291,7 @@ async function pollForCompletion(predictionId, token, maxAttempts = 30) {
   let attempts = 0;
 
   while (attempts < maxAttempts) {
+    // Wait 2 seconds between polls
     await new Promise(resolve => setTimeout(resolve, 2000));
     
     try {
@@ -289,14 +322,28 @@ async function pollForCompletion(predictionId, token, maxAttempts = 30) {
           console.error('Prediction canceled');
           return null;
         }
+      } else {
+        console.error(`Polling request failed with status: ${statusResponse.status}`);
       }
     } catch (error) {
-      console.error(`Polling error:`, error.message);
+      console.error(`Polling error at attempt ${attempts + 1}:`, error.message);
     }
     
     attempts++;
   }
   
-  console.error('Polling timeout');
+  console.error('Polling timeout after', maxAttempts, 'attempts');
   return null;
+}
+
+// OPTIONS method for CORS preflight
+export async function OPTIONS(request) {
+  return new NextResponse(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
+  });
 }
