@@ -7,13 +7,27 @@ export default function Home() {
   const [imageUrl, setImageUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [inputImages, setInputImages] = useState([]);
+  
+  // Enhancement options
+  const [skinSmoothing, setSkinSmoothing] = useState(true);
+  const [colorStyle, setColorStyle] = useState('natural');
+  const [backgroundOption, setBackgroundOption] = useState('original'); // NEW
 
   const defaultPrompt = "Professional B&W corporate headshot. Dark navy suit, white shirt, silk tie. Sharp 8K quality. Soft studio lighting. Blurred office background. Eyes in focus.";
 
   const handleImageUpload = async (e) => {
     const files = Array.from(e.target.files);
-    const imageUrls = files.map(file => URL.createObjectURL(file));
-    setInputImages(imageUrls);
+    
+    const imagePromises = files.map(file => {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.readAsDataURL(file);
+      });
+    });
+    
+    const base64Images = await Promise.all(imagePromises);
+    setInputImages(base64Images);
   };
 
   const generateImage = async () => {
@@ -24,7 +38,8 @@ export default function Home() {
 
     setLoading(true);
     try {
-      const response = await fetch('/api/generate', {
+      // First generate the headshot
+      const generateResponse = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -32,13 +47,45 @@ export default function Home() {
           inputImages: inputImages 
         }),
       });
-      const data = await response.json();
-      if (data.error) {
-        alert(data.error);
-      } else {
-        setImageUrl(data.image);
+      
+      const generateData = await generateResponse.json();
+      
+      if (generateData.error) {
+        alert(generateData.error);
+        setLoading(false);
+        return;
       }
+
+      // Then enhance/replace background if needed
+      if (backgroundOption !== 'original' || skinSmoothing || colorStyle !== 'natural') {
+        const enhanceResponse = await fetch('/api/enhance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            inputImages: [generateData.image],
+            backgroundOption: backgroundOption, // NEW
+            skinSmoothing: skinSmoothing,
+            colorStyle: colorStyle,
+            enhancementLevel: 'professional',
+            lightingCorrection: true,
+            sharpening: true
+          }),
+        });
+
+        const enhanceData = await enhanceResponse.json();
+        
+        if (enhanceData.error) {
+          console.error('Enhancement failed:', enhanceData.error);
+          setImageUrl(generateData.image);
+        } else {
+          setImageUrl(enhanceData.image);
+        }
+      } else {
+        setImageUrl(generateData.image);
+      }
+      
     } catch (error) {
+      console.error('Error:', error);
       alert('Failed to generate image. Please try again.');
     }
     setLoading(false);
@@ -70,11 +117,11 @@ export default function Home() {
             </li>
             <li className="flex gap-2">
               <span className="font-bold">2.</span>
-              <span>Describe your desired professional style</span>
+              <span>Choose your background and enhancements</span>
             </li>
             <li className="flex gap-2">
               <span className="font-bold">3.</span>
-              <span>Generate and download your headshot (30-60 seconds)</span>
+              <span>Generate and download your headshot (30-90 seconds)</span>
             </li>
           </ol>
         </div>
@@ -108,9 +155,74 @@ export default function Home() {
           )}
         </div>
 
+        {/* NEW: Background & Enhancement Options */}
+        <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6 mb-6">
+          <h3 className="text-sm font-semibold text-slate-700 mb-4">
+            Background & Enhancements
+          </h3>
+          
+          <div className="space-y-4">
+            {/* Background Selection */}
+            <div>
+              <label className="block font-medium text-slate-900 mb-2">
+                Background Style
+              </label>
+              <select
+                value={backgroundOption}
+                onChange={(e) => setBackgroundOption(e.target.value)}
+                className="w-full px-4 py-3 border border-slate-300 rounded-lg text-sm"
+              >
+                <option value="original">Keep Original</option>
+                <option value="blur">Blur Background</option>
+                <option value="office">Modern Office</option>
+                <option value="studio_gray">Studio Gray</option>
+                <option value="studio_white">Studio White</option>
+                <option value="bookshelf">Bookshelf/Library</option>
+                <option value="outdoor">Outdoor Professional</option>
+                <option value="corporate">Corporate Building</option>
+              </select>
+              <p className="text-xs text-slate-500 mt-1">
+                Replace or blur your background professionally
+              </p>
+            </div>
+
+            {/* Skin Smoothing */}
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={skinSmoothing}
+                onChange={(e) => setSkinSmoothing(e.target.checked)}
+                className="w-4 h-4 text-blue-600 rounded"
+              />
+              <div>
+                <div className="font-medium text-slate-900">Skin Smoothing</div>
+                <div className="text-xs text-slate-500">Enhance facial features</div>
+              </div>
+            </label>
+
+            {/* Color Style */}
+            <div>
+              <label className="block font-medium text-slate-900 mb-2">
+                Color Style
+              </label>
+              <select
+                value={colorStyle}
+                onChange={(e) => setColorStyle(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-300 rounded-lg text-sm"
+              >
+                <option value="natural">Natural</option>
+                <option value="warm">Warm Tones</option>
+                <option value="cool">Cool Tones</option>
+                <option value="vibrant">Vibrant</option>
+                <option value="corporate">Corporate</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
         <div className="bg-white rounded-2xl shadow-lg p-4 sm:p-6 mb-6">
           <label className="block text-sm font-semibold text-slate-700 mb-3">
-            Describe your headshot style
+            Describe your headshot style (optional)
           </label>
           <textarea
             value={prompt}
@@ -135,7 +247,7 @@ export default function Home() {
         {loading && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mt-6">
             <p className="text-sm text-yellow-800 text-center">
-              Creating your professional headshot... This takes about 30-60 seconds
+              Creating your professional headshot... This takes about 30-90 seconds
             </p>
           </div>
         )}

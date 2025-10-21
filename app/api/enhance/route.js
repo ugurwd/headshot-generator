@@ -10,7 +10,7 @@ export async function POST(request) {
       inputImages,
       enhancementLevel = 'professional', // professional, subtle, dramatic
       colorStyle = 'natural', // natural, warm, cool, vibrant, corporate
-      backgroundBlur = false,
+      backgroundOption = 'original', // NEW: original, blur, office, studio_gray, studio_white, bookshelf, outdoor, corporate
       skinSmoothing = true,
       lightingCorrection = true,
       sharpening = true
@@ -43,7 +43,7 @@ export async function POST(request) {
     const enhancementsApplied = [];
 
     console.log('Starting LinkedIn photo enhancement...');
-    console.log('Settings:', { enhancementLevel, colorStyle, backgroundBlur, skinSmoothing });
+    console.log('Settings:', { enhancementLevel, colorStyle, backgroundOption, skinSmoothing });
 
     // STEP 1: Face Enhancement with GFPGAN (for skin smoothing and face enhancement)
     if (skinSmoothing || lightingCorrection) {
@@ -129,77 +129,65 @@ export async function POST(request) {
       }
     }
 
-    // STEP 3: Optional Background Blur
-    if (backgroundBlur) {
+    // STEP 3: Background Replacement or Blur (NEW - UPDATED)
+    if (backgroundOption !== 'original') {
       try {
-        console.log('Applying background blur...');
+        console.log('Processing background:', backgroundOption);
         
-        // Remove background first
-        const rembgResponse = await fetch('https://api.replicate.com/v1/predictions', {
+        // Define prompts for different background styles
+        const backgroundPrompts = {
+          blur: "professional portrait, sharp subject in focus, beautiful soft bokeh background blur, shallow depth of field, professional lighting",
+          office: "modern office background with glass windows, professional workspace, bright natural light, blurred background, corporate environment",
+          studio_gray: "neutral gray studio background, professional photography backdrop, gradient gray wall, studio lighting",
+          studio_white: "clean white studio background, professional photography, minimalist backdrop, bright even lighting",
+          bookshelf: "professional bookshelf background, library setting, books and shelves blurred in background, executive office aesthetic",
+          outdoor: "professional outdoor background, natural daylight, soft blurred greenery, pleasant natural setting",
+          corporate: "corporate office building interior, modern business setting, professional architecture, elegant blurred background"
+        };
+
+        const backgroundPrompt = backgroundPrompts[backgroundOption] || backgroundPrompts.blur;
+        
+        // Use SDXL img2img to transform the background
+        const sdxlResponse = await fetch('https://api.replicate.com/v1/predictions', {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${REPLICATE_API_TOKEN}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            version: "fb8af171cfa1616ddcf1242c093f9c46bcada5ad4cf6f2fbe8b81b330ec5c003",
+            version: "39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
             input: {
-              image: processedImage
+              image: processedImage,
+              prompt: `professional LinkedIn headshot portrait, ${backgroundPrompt}, high quality 8k photography, professional studio quality`,
+              negative_prompt: "distorted face, ugly face, deformed features, amateur photo, low quality, artifacts, blurry face, multiple faces",
+              prompt_strength: backgroundOption === 'blur' ? 0.45 : 0.60, // Higher strength for background replacement
+              num_inference_steps: 30,
+              guidance_scale: 7.5,
+              scheduler: "DPMSolverMultistep"
             }
           })
         });
 
-        if (rembgResponse.ok) {
-          const prediction = await rembgResponse.json();
-          let foreground;
+        if (sdxlResponse.ok) {
+          const prediction = await sdxlResponse.json();
           
           if (prediction.status === 'starting' || prediction.status === 'processing') {
-            foreground = await pollForCompletion(prediction.id, REPLICATE_API_TOKEN);
-          } else if (prediction.status === 'succeeded' && prediction.output) {
-            foreground = prediction.output;
-          }
-
-          if (foreground) {
-            // Add blurred background using SDXL
-            const sdxlResponse = await fetch('https://api.replicate.com/v1/predictions', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${REPLICATE_API_TOKEN}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                version: "39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
-                input: {
-                  prompt: "professional blurred office background, bokeh effect, soft focus background, professional headshot setting",
-                  image: processedImage,
-                  prompt_strength: 0.25, // Very low to just blur background
-                  num_inference_steps: 20,
-                  guidance_scale: 3,
-                  negative_prompt: "sharp background, focused background, clear background"
-                }
-              })
-            });
-
-            if (sdxlResponse.ok) {
-              const sdxlPrediction = await sdxlResponse.json();
-              
-              if (sdxlPrediction.status === 'starting' || sdxlPrediction.status === 'processing') {
-                const blurred = await pollForCompletion(sdxlPrediction.id, REPLICATE_API_TOKEN);
-                if (blurred) {
-                  processedImage = blurred;
-                  enhancementsApplied.push('Professional background blur');
-                }
-              } else if (sdxlPrediction.status === 'succeeded' && sdxlPrediction.output) {
-                processedImage = Array.isArray(sdxlPrediction.output) ? sdxlPrediction.output[0] : sdxlPrediction.output;
-                enhancementsApplied.push('Professional background blur');
-              }
+            const result = await pollForCompletion(prediction.id, REPLICATE_API_TOKEN);
+            if (result) {
+              processedImage = result;
+              const bgLabel = backgroundOption.replace('_', ' ');
+              enhancementsApplied.push(`Background: ${bgLabel.charAt(0).toUpperCase() + bgLabel.slice(1)}`);
             }
+          } else if (prediction.status === 'succeeded' && prediction.output) {
+            processedImage = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
+            const bgLabel = backgroundOption.replace('_', ' ');
+            enhancementsApplied.push(`Background: ${bgLabel.charAt(0).toUpperCase() + bgLabel.slice(1)}`);
           }
         } else {
-          console.log('Background removal failed, skipping blur');
+          console.log('Background processing failed, using original background');
         }
       } catch (error) {
-        console.log('Background blur error:', error.message);
+        console.log('Background processing error:', error.message);
       }
     }
 
@@ -264,7 +252,7 @@ export async function POST(request) {
       settings: {
         enhancement_level: enhancementLevel,
         color_style: colorStyle,
-        background_blur: backgroundBlur,
+        background_option: backgroundOption, // NEW
         skin_smoothing: skinSmoothing,
         lighting_correction: lightingCorrection,
         sharpening: sharpening
